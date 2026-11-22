@@ -1,0 +1,7 @@
+build/
+build-*/
+dist/
+pkgroot/
+pkgscripts/
+preview/
+.DS_Store

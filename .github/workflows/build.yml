@@ -1,0 +1,87 @@
+name: Build plugin (Mac and Windows)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keep the video tool between builds
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-build
+          key: ffmpeg-mac-${{ hashFiles('scripts/build_ffmpeg_mac.sh') }}
+
+      - name: Build the video tool (ffmpeg)
+        run: bash scripts/build_ffmpeg_mac.sh
+
+      - name: Configure (universal arm64 + x86_64)
+        run: >
+          cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DMUU_BUILD_TESTS=ON
+          -DMUU_BUILD_NUMBER=${{ github.run_number }}
+          "-DMUU_GOOGLE_CLIENT_ID=${{ secrets.MUU_GOOGLE_CLIENT_ID }}"
+          "-DMUU_GOOGLE_CLIENT_SECRET=${{ secrets.MUU_GOOGLE_CLIENT_SECRET }}"
+
+      - name: Build
+        run: cmake --build build --config Release --target MUUploader_AU MUUploader_VST3 MUUploader_Standalone MUUTests -- -quiet
+
+      - name: Tests (catching audio, library, wording, assistant, a real video)
+        run: |
+          sudo mkdir -p "/Library/Application Support/MU Uploader"
+          sudo cp ffmpeg-build/ffmpeg "/Library/Application Support/MU Uploader/ffmpeg"
+          BIN="$(find build -type f -name MUUTests -perm +111 | head -1)"
+          HOME="$RUNNER_TEMP/muu-home" "$BIN"
+
+      - name: AU validation
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/MUUploader_artefacts/Release/AU/MU Uploader.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aufx Muup Muno
+
+      - name: Build installer
+        run: bash scripts/make_installer.sh build/MUUploader_artefacts/Release "${GITHUB_RUN_NUMBER}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: MU Uploader build ${{ github.run_number }}
+          body: |
+            Mac: download MUUploader-Mac.pkg, double-click it and click through the installer. Then restart your DAW.
+            The first time, macOS says it could not check the file: press Done, open System Settings >
+            Privacy & Security, scroll to the bottom and press Open Anyway.
+
+            Windows (added a few minutes after the Mac file): download MUUploader-Windows-Setup.exe and run it with
+            your DAW closed. Windows may say it does not recognise the publisher: choose More info > Run anyway.
+
+            In the DAW, put MU Uploader last on the master.
+          make_latest: true
+          files: dist/MUUploader-Mac.pkg
+
+  windows:
+    needs: mac
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build, test and package
+        shell: pwsh
+        env:
+          MUU_GOOGLE_CLIENT_ID: ${{ secrets.MUU_GOOGLE_CLIENT_ID }}
+          MUU_GOOGLE_CLIENT_SECRET: ${{ secrets.MUU_GOOGLE_CLIENT_SECRET }}
+        run: ./scripts/build_windows.ps1 -BuildNumber ${{ github.run_number }}
+
+      - name: Add the Windows installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: dist/*.exe
