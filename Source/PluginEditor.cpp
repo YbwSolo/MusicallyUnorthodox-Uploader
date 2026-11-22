@@ -293,9 +293,9 @@ void UploaderEditor::upload()
     auto& d = app.draft();
     auto& s = app.services;
 
-    if (! d.toYouTube && ! d.toBeatStars) { toast ("Tick YouTube or BeatStars first.", true); return; }
+    if (! d.toYouTube && ! d.toBeatStars && ! d.toShort) { toast ("Tick where it should go first.", true); return; }
     if (d.toYouTube && ! s.google.signedIn()) { toast ("Connect YouTube in Settings first.", true); showPage (pageSettings); return; }
-    if (d.toYouTube && ! media::available()) { toast ("The video tool is missing. Run the installer again.", true); return; }
+    if ((d.toYouTube || d.toShort) && ! media::available()) { toast ("The video tool is missing. Run the installer again.", true); return; }
     if (d.schedule && d.publishAt < juce::Time::getCurrentTime() + juce::RelativeTime::minutes (15))
     {
         toast ("Pick a time at least 15 minutes from now.", true);
@@ -313,12 +313,19 @@ void UploaderEditor::upload()
     job.request.privacy = d.privacy;
     if (d.schedule) job.request.publishAt = d.publishAt;
 
-    if (job.youtube)
+    job.clip = d.toShort;
+    job.shortRequest = job.request;
+    job.shortRequest.title = texts::shortTitle (d.beat);
+    job.shortRequest.description = texts::shortDescription (d.beat, s.settings, "{full}");
+
+    if (job.youtube || job.clip)
     {
         const auto producer = s.settings.get ("producer").trim();
         const auto subtitle = (d.beat.artist.trim().isNotEmpty() ? d.beat.artist.trim() + " type beat" : juce::String ("Type beat"))
                             + (producer.isNotEmpty() ? "   |   prod. " + producer : juce::String());
-        job.frame = media::composeFrame (juce::ImageFileFormat::loadFrom (d.cover), d.beat.title, subtitle);
+        const auto cover = juce::ImageFileFormat::loadFrom (d.cover);
+        if (job.youtube) job.frame = media::composeFrame (cover, d.beat.title, subtitle);
+        if (job.clip)    job.tallFrame = media::composeFrame (cover, d.beat.title, subtitle, true);
     }
 
     if (! s.publisher.start (job))

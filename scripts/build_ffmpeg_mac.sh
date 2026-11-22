@@ -39,7 +39,7 @@ for ARCH in arm64 x86_64; do
       --enable-parser=png,mjpeg,mpegaudio,flac \
       --enable-encoder=h264_videotoolbox,mpeg4,aac,libmp3lame \
       --enable-muxer=mp4,mp3 \
-      --enable-filter=scale,format,aresample,null,anull \
+      --enable-filter=scale,format,aresample,afade,null,anull \
       --enable-swscale --enable-swresample --enable-zlib >/dev/null
     make -j4 >/dev/null )
   cp "ffmpeg-$ARCH/ffmpeg" "ffmpeg-$ARCH.bin"

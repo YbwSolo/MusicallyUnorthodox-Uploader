@@ -152,13 +152,16 @@ public:
 
         addAndMakeVisible (toYouTube);
         addAndMakeVisible (toBeatStars);
+        addAndMakeVisible (toShort);
+        toShort.setTooltip ("A 45 second upright clip of the fullest part of the beat. With YouTube ticked it is also posted as a Short.");
+        toShort.onClick = [this] { app.draft().toShort = toShort.getToggleState(); };
         toYouTube.onClick = [this]   { app.draft().toYouTube = toYouTube.getToggleState(); };
         toBeatStars.onClick = [this] { app.draft().toBeatStars = toBeatStars.getToggleState(); };
 
         addAndMakeVisible (cover);
         cover.onClick = [this] { chooseFile (true); };
 
-        for (auto* b : { &record, &choose, &preview, &save, &upload, &openLink, &openPack, &startNew })
+        for (auto* b : { &record, &choose, &useTake, &preview, &save, &upload, &openLink, &openPack, &openClip, &startNew })
             addAndMakeVisible (*b);
         theme::makePrimary (upload);
         theme::makeQuiet (startNew);
@@ -169,6 +172,13 @@ public:
             refresh();
         };
         choose.onClick = [this]   { chooseFile (false); };
+        theme::makePrimary (useTake);
+        useTake.onClick = [this]  { app.processor.useWaitingTake(); };
+        openClip.onClick = [this]
+        {
+            const auto clip = Publisher::clipFile (app.services.library, app.draft().beat);
+            if (clip.existsAsFile()) clip.revealToUser();
+        };
         preview.onClick = [this]
         {
             readFields();
@@ -205,7 +215,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        paintHeader (g, "UPLOAD", "Put this plugin last on the master. Export the beat and it is caught, ready to post.");
+        paintHeader (g, "UPLOAD", "Put this plugin last on the master. Play the beat through, or export it, and it is caught, ready to post.");
 
         // the capture card
         theme::fillPanel (g, captureArea.toFloat(), theme::panel);
@@ -215,9 +225,18 @@ public:
         juce::String line1, line2;
         juce::Colour dot = theme::textMute;
 
-        if (state == Capture::State::recording)
+        const bool listens = app.services.settings.get ("listen", "1") == "1";
+        const auto& waiting = app.processor.waitingTake;
+
+        if (state == Capture::State::recording && c.kind() == Capture::Kind::heard)
         {
-            line1 = "Recording  " + texts::lengthText (c.secondsRecorded());
+            line1 = "Listening  " + texts::lengthText (c.secondsRecorded());
+            line2 = "Let it play to the end. It is caught when you stop.";
+            dot = theme::yellow;
+        }
+        else if (state == Capture::State::recording)
+        {
+            line1 = (c.kind() == Capture::Kind::exported ? "Catching the export  " : "Recording  ") + texts::lengthText (c.secondsRecorded());
             line2 = "It finishes on its own when the export or the playback stops.";
             dot = theme::bad;
         }
@@ -230,9 +249,15 @@ public:
         else if (d.audio.existsAsFile())
         {
             line1 = "Beat caught  " + texts::lengthText (d.beat.seconds);
-            line2 = d.beat.id.isNotEmpty() ? juce::String ("Saved in your beats. Export again to replace it with a new take.")
-                                           : juce::String ("Fill in the details below, then upload. Export again to replace it.");
+            line2 = waiting.file.existsAsFile() ? "A newer play-through (" + texts::lengthText (waiting.seconds) + ") is waiting."
+                  : d.beat.id.isNotEmpty()      ? juce::String ("Saved in your beats. Play it through again for a new take.")
+                                                : juce::String ("Fill in the details below, then upload. Play it again to replace it.");
             dot = theme::good;
+        }
+        else if (listens)
+        {
+            line1 = "Play your beat from the top and it is caught";
+            line2 = "Stop at the end and it appears here. Exporting the beat works too.";
         }
         else
         {
@@ -240,7 +265,7 @@ public:
             line2 = "Or press Record and play it from the top, all the way through.";
         }
 
-        auto text = captureArea.reduced (18, 0);
+        auto text = captureArea.reduced (18, 0).withTrimmedRight (useTake.isVisible() ? 392 : 240);
         g.setColour (dot);
         g.fillEllipse ((float) text.getX(), (float) captureArea.getCentreY() - 5.0f, 10.0f, 10.0f);
         text.removeFromLeft (24);
@@ -276,7 +301,9 @@ public:
         r.removeFromTop (78);
 
         captureArea = r.removeFromTop (72);
-        auto buttons = captureArea.reduced (14, 20).removeFromRight (236);
+        auto buttons = captureArea.reduced (14, 20).removeFromRight (388);
+        useTake.setBounds (buttons.removeFromLeft (142));
+        buttons.removeFromLeft (10);
         record.setBounds (buttons.removeFromLeft (112));
         buttons.removeFromLeft (10);
         choose.setBounds (buttons);
@@ -290,6 +317,7 @@ public:
         right.removeFromTop (12);
         toYouTube.setBounds (right.removeFromTop (26));
         toBeatStars.setBounds (right.removeFromTop (26));
+        toShort.setBounds (right.removeFromTop (26));
 
         auto row = r.removeFromTop (50);
         title.setBounds (row.removeFromLeft (row.getWidth() * 55 / 100));
@@ -384,6 +412,8 @@ public:
         privacy.setSelectedItemIndex (d.schedule ? 3 : juce::jmax (0, juce::StringArray { "public", "unlisted", "private" }.indexOf (d.privacy)), juce::dontSendNotification);
         toYouTube.setToggleState (d.toYouTube, juce::dontSendNotification);
         toBeatStars.setToggleState (d.toBeatStars, juce::dontSendNotification);
+        toShort.setToggleState (d.toShort, juce::dontSendNotification);
+        useTake.setVisible (app.processor.waitingTake.file.existsAsFile() && ! p0busy());
 
         if (shownCover != d.cover)
         {
@@ -398,6 +428,7 @@ public:
         record.setButtonText (state == Capture::State::idle ? "Record" : "Stop");
         upload.setButtonText (busy ? "Cancel" : (d.schedule ? "Schedule" : "Upload"));
         upload.setEnabled (busy || d.audio.existsAsFile());
+        if (captureArea.getWidth() > 0) repaint (captureArea);
         save.setEnabled (d.audio.existsAsFile() && ! busy);
         progress.setVisible (busy);
         shownProgress = p.progress();
@@ -408,11 +439,13 @@ public:
         else if (mine && p.lastError().isNotEmpty()) { statusText = p.lastError(); statusIsError = true; }
         else if (mine && p.lastUrl().isNotEmpty())   statusText = p.stage() + ": " + p.lastUrl();
         else if (mine && p.lastPack().isDirectory()) statusText = "The BeatStars files are ready to drag onto its upload page.";
+        else if (mine && ! p.running() && p.stage() == "Ready" && Publisher::clipFile (app.services.library, b).existsAsFile()) statusText = "The vertical clip is ready.";
         else if (b.youtubeUrl.isNotEmpty())          statusText = "On YouTube: " + b.youtubeUrl;
         else if (d.toYouTube && ! app.services.google.signedIn()) statusText = "YouTube is not connected yet. Connect it in Settings.";
 
         openLink.setVisible (! busy && b.youtubeUrl.isNotEmpty());
         openPack.setVisible (! busy && b.id.isNotEmpty() && Publisher::packFolder (app.services.library, b).isDirectory());
+        openClip.setVisible (! busy && b.id.isNotEmpty() && Publisher::clipFile (app.services.library, b).existsAsFile());
         layoutStatus();
         repaint();
     }
@@ -436,11 +469,14 @@ private:
         }
     }
 
+    bool p0busy() const { return app.services.publisher.running(); }
+
     void layoutStatus()
     {
         auto row = statusRowArea;
-        if (openPack.isVisible()) { openPack.setBounds (row.removeFromRight (136)); row.removeFromRight (8); }
-        if (openLink.isVisible()) { openLink.setBounds (row.removeFromRight (136)); row.removeFromRight (12); }
+        if (openClip.isVisible()) { openClip.setBounds (row.removeFromRight (104)); row.removeFromRight (8); }
+        if (openPack.isVisible()) { openPack.setBounds (row.removeFromRight (128)); row.removeFromRight (8); }
+        if (openLink.isVisible()) { openLink.setBounds (row.removeFromRight (132)); row.removeFromRight (12); }
         if (progress.isVisible()) { progress.setBounds (row.removeFromLeft (180).withSizeKeepingCentre (180, 8)); row.removeFromLeft (12); }
         statusArea = row;
     }
@@ -478,6 +514,7 @@ private:
             const double seconds = media::lengthInSeconds (file);
             if (seconds <= 0.0) { app.toast ("That audio file could not be read.", true); return; }
             if (d.beat.id.isNotEmpty()) app.processor.newDraft();
+            app.processor.draftWasHeard = false;
             app.draft().audio = file;
             app.draft().beat.seconds = seconds;
             if (app.draft().beat.title.isEmpty()) app.draft().beat.title = file.getFileNameWithoutExtension();
@@ -502,8 +539,9 @@ private:
     juce::ComboBox catalog, privacy;
     juce::StringArray catalogIds;
     juce::TextButton ffp { "FREE FOR PROFIT" }, freeOnly { "FREE" };
-    juce::ToggleButton toYouTube { "Post to YouTube" }, toBeatStars { "Pack for BeatStars" };
+    juce::ToggleButton toYouTube { "Post to YouTube" }, toBeatStars { "Pack for BeatStars" }, toShort { "Vertical clip + Short" };
     CoverBox cover;
+    juce::TextButton useTake { "Use the new take" }, openClip { "Show clip" };
     juce::TextButton record { "Record" }, choose { "Choose a file" }, preview { "Preview the post" }, save { "Save" }, upload { "Upload" },
                      openLink { "Open on YouTube" }, openPack { "Open BeatStars" }, startNew { "New beat" };
     double shownProgress = 0.0;

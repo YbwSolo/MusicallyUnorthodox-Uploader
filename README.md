@@ -2,7 +2,7 @@
 
 A plugin from Musically Unorthodox that posts your beats without leaving the DAW.
 
-Put it last on the master. When you export the beat the plugin catches it, you give it a name, a price and a cover,
+Put it last on the master. When you play the beat through (or export it) the plugin catches it, you give it a name, a price and a cover,
 and it makes the video and posts it to your YouTube channel with the title, description and tags written for you.
 It also saves every beat into catalogs, lays the files out for BeatStars, and writes the emails when you pitch a beat.
 
@@ -22,12 +22,17 @@ Then open your DAW, rescan plugins if it does not show up, and put **MU Uploader
 ## Using it
 
 1. **Settings:** type your producer name, contact email, Instagram and BeatStars store link, and press Connect YouTube.
-2. **Upload:** export your beat the way you always do. The plugin shows "Beat caught". (Or press Record and play the
-   beat from the top.) Fill in the name, type beat artist, BPM, key, price and tags, and drop a cover on the square.
+2. **Upload:** press play at the start of the beat and stop at the end. The plugin listens while it plays and shows
+   "Beat caught", with the silence before and after trimmed off. Exporting the beat is caught the same way. Fill in
+   the name, type beat artist, BPM, key, price and tags, and drop a cover on the square.
+   Listening back to a part of the project never replaces a beat you have caught: a newer full play-through waits
+   until you press **Use the new take**.
 3. Pick the licence:
    - **Free for profit:** artists can release on every platform as long as they credit you and do not claim Content ID.
    - **Free:** free to record on, but they have to buy a lease to release it on streaming platforms.
 4. Press **Upload**. It makes the video, posts it, and gives you the link. Choose Schedule to have it go public later.
+   Tick **Vertical clip + Short** for a 45 second upright clip cut from the fullest part of the beat. It is posted
+   as a YouTube Short, and the file is kept so you can post it to TikTok and Instagram.
 5. **Beats** keeps everything you have saved. Make catalogs and sub-categories, and drag a beat out to get its file.
 6. **Email** writes a submission email for the beat and opens it in your own mail app.
 7. **Assistant:** type it in one go, for example

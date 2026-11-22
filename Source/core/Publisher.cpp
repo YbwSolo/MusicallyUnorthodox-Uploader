@@ -49,6 +49,7 @@ static juce::String safeName (const juce::String& title)
 }
 
 juce::File Publisher::packFolder (const Library& lib, const Beat& b) { return lib.beatDir (b.id).getChildFile ("For BeatStars"); }
+juce::File Publisher::clipFile (const Library& lib, const Beat& b)   { return lib.beatDir (b.id).getChildFile (safeName (b.title) + " vertical.mp4"); }
 
 bool Publisher::makePack (const Beat& b, juce::String& problem)
 {
@@ -94,32 +95,58 @@ bool Publisher::makePack (const Beat& b, juce::String& problem)
 
 void Publisher::run()
 {
-    juce::String problem, videoId;
+    juce::String problem, videoId, shortId;
     const auto dir = library.beatDir (beat.id);
     const auto audio = library.audioOf (beat);
+    auto writePng = [] (const juce::Image& image, const juce::File& file)
+    {
+        file.deleteFile();
+        juce::PNGImageFormat png;
+        if (auto stream = file.createOutputStream())
+            png.writeImageToStream (image, *stream);
+    };
 
-    if (job.youtube)
+    if (! audio.existsAsFile())
+        problem = "The beat's audio file is missing.";
+
+    if (problem.isEmpty() && job.youtube)
     {
         const auto frameFile = dir.getChildFile ("frame.png");
         const auto video = dir.getChildFile ("video.mp4");
-        frameFile.deleteFile();
-        {
-            juce::PNGImageFormat png;
-            if (auto stream = frameFile.createOutputStream())
-                png.writeImageToStream (job.frame, *stream);
-        }
+        writePng (job.frame, frameFile);
 
         setStage ("Making the video", 0.0);
-        bool ok = audio.existsAsFile()
-               && media::renderVideo (frameFile, audio, video, beat.seconds,
-                                      [this] (double f) { fraction.store (f * 0.35); sendChangeMessage(); return ! threadShouldExit(); }, problem);
-        if (! ok && problem.isEmpty()) problem = "The beat's audio file is missing.";
-
-        if (ok)
+        if (media::renderVideo (frameFile, audio, video, beat.seconds,
+                                [this] (double f) { fraction.store (f * 0.25); sendChangeMessage(); return ! threadShouldExit(); }, problem))
         {
-            setStage ("Uploading to YouTube", 0.35);
+            setStage ("Uploading to YouTube", 0.25);
             videoId = youtube::upload (google, video, job.request,
-                                       [this] (double f) { fraction.store (0.35 + f * 0.6); sendChangeMessage(); return ! threadShouldExit(); }, problem);
+                                       [this] (double f) { fraction.store (0.25 + f * 0.45); sendChangeMessage(); return ! threadShouldExit(); }, problem);
+        }
+    }
+
+    if (problem.isEmpty() && job.clip && ! threadShouldExit())
+    {
+        // a short vertical cut of the fullest part of the beat, for Shorts, TikTok and Reels
+        const auto frameFile = dir.getChildFile ("frame-tall.png");
+        const auto clip = clipFile (library, beat);
+        writePng (job.tallFrame, frameFile);
+        const double length = juce::jmin (45.0, beat.seconds);
+        const double start = media::bestClipStart (audio, length);
+
+        setStage ("Making the vertical clip", 0.70);
+        if (media::renderVideo (frameFile, audio, clip, length,
+                                [this] (double f) { fraction.store (0.70 + f * 0.10); sendChangeMessage(); return ! threadShouldExit(); }, problem,
+                                start, beat.seconds > length ? 1.5 : 0.0)
+            && job.youtube)
+        {
+            auto request = job.shortRequest;
+            const auto full = videoId.isNotEmpty() ? "https://youtu.be/" + videoId : beat.youtubeUrl;
+            request.description = full.isNotEmpty() ? request.description.replace ("{full}", full)
+                                                    : request.description.replace ("Full beat: {full}\n", "");
+            setStage ("Posting the Short", 0.80);
+            shortId = youtube::upload (google, clip, request,
+                                       [this] (double f) { fraction.store (0.80 + f * 0.15); sendChangeMessage(); return ! threadShouldExit(); }, problem);
         }
     }
 
@@ -139,14 +166,19 @@ void Publisher::run()
     }
     fraction.store (1.0);
 
-    juce::MessageManager::callAsync ([this, id = beat.id, videoId]
+    juce::MessageManager::callAsync ([this, id = beat.id, videoId, shortId]
     {
-        if (videoId.isNotEmpty())
+        if (videoId.isNotEmpty() || shortId.isNotEmpty())
             if (auto* saved = library.find (id))
             {
                 auto updated = *saved;
-                updated.youtubeId = videoId;
-                updated.youtubeUrl = "https://youtu.be/" + videoId;
+                if (videoId.isNotEmpty())
+                {
+                    updated.youtubeId = videoId;
+                    updated.youtubeUrl = "https://youtu.be/" + videoId;
+                }
+                if (shortId.isNotEmpty())
+                    updated.shortUrl = "https://youtube.com/shorts/" + shortId;
                 updated.uploadedMs = juce::Time::currentTimeMillis();
                 library.save (updated, {}, {}, false);
             }

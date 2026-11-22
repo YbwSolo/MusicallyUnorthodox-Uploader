@@ -36,6 +36,14 @@ public:
             app.processor.capture.setCatchExports (catchExports.getToggleState());
         };
 
+        addAndMakeVisible (listen);
+        listen.setToggleState (app.services.settings.get ("listen", "1") == "1", juce::dontSendNotification);
+        listen.onClick = [this]
+        {
+            app.services.settings.set ("listen", listen.getToggleState() ? "1" : "0");
+            app.processor.capture.setListen (listen.getToggleState());
+        };
+
         addAndMakeVisible (packByDefault);
         packByDefault.setToggleState (app.services.settings.get ("defaultBeatStars", "0") == "1", juce::dontSendNotification);
         packByDefault.onClick = [this] { app.services.settings.set ("defaultBeatStars", packByDefault.getToggleState() ? "1" : "0"); };
@@ -111,11 +119,12 @@ public:
         defaultLicence.setBounds (licenceArea);
         row.removeFromLeft (20);
         openFolder.setBounds (row.removeFromRight (150).withTrimmedTop (16));
-        r.removeFromTop (14);
+        r.removeFromTop (10);
 
+        listen.setBounds (r.removeFromTop (26));
         catchExports.setBounds (r.removeFromTop (26));
         packByDefault.setBounds (r.removeFromTop (26));
-        r.removeFromTop (10);
+        r.removeFromTop (6);
 
         advanced.setBounds (r.removeFromTop (30).removeFromLeft (128));
         r.removeFromTop (8);
@@ -149,7 +158,8 @@ private:
           aiEndpoint { "Online assistant address", "Leave empty to use the built-in assistant" };
     juce::Label licenceLabel;
     juce::ComboBox defaultLicence;
-    juce::ToggleButton catchExports { "Catch the beat automatically when the DAW exports it" },
+    juce::ToggleButton listen { "Catch the beat while it plays (no export or record needed)" },
+                       catchExports { "Catch the beat automatically when the DAW exports it" },
                        packByDefault { "Always pack the files for BeatStars when uploading" };
     juce::TextButton connect { "Connect YouTube" }, openFolder { "Open beats folder" }, advanced { "Advanced" };
     juce::Rectangle<int> youtubeArea, footerArea;

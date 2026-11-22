@@ -13,7 +13,7 @@ struct Draft
     juce::String privacy { "public" };
     bool schedule = false;
     juce::Time publishAt;
-    bool toYouTube = true, toBeatStars = false;
+    bool toYouTube = true, toBeatStars = false, toShort = false;
 };
 
 /** Does the slow work in the background: makes the video, uploads it, and packs the files for BeatStars. */
@@ -23,9 +23,9 @@ public:
     struct Job
     {
         juce::String beatId;
-        bool youtube = false, beatstarsPack = false;
-        YouTubeRequest request;
-        juce::Image frame;
+        bool youtube = false, beatstarsPack = false, clip = false;
+        YouTubeRequest request, shortRequest;       // the Short's description gets the link to the full video added
+        juce::Image frame, tallFrame;
     };
 
     Publisher (Library&, Settings&, GoogleAuth&);
@@ -43,6 +43,7 @@ public:
     juce::String lastBeatId() const;
 
     static juce::File packFolder (const Library&, const Beat&);
+    static juce::File clipFile (const Library&, const Beat&);
 
 private:
     void run() override;

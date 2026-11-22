@@ -3,6 +3,7 @@
 #include "core/Publisher.h"
 #include "core/Assistant.h"
 #include "core/Texts.h"
+#include "PluginProcessor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
 #include <cstring>
@@ -38,7 +39,8 @@ int main()
     const int block = 512, blocks = 1722;                  // 20 seconds at 44.1 kHz
     {
         Capture capture;
-        capture.onCaptured = [&] (juce::File f, double s) { caught = f; caughtSeconds = s; };
+        capture.setListen (false);
+        capture.onCaptured = [&] (juce::File f, double s, Capture::Kind) { caught = f; caughtSeconds = s; };
         capture.prepare (44100.0, 2);
         juce::AudioBuffer<float> buffer (2, block);
         double phase = 0;
@@ -67,12 +69,12 @@ int main()
         capture.arm();
         capture.process (buffer, false, true, false);
         check (capture.state() == Capture::State::armed, "armed waits for play");
-        for (int b = 0; b < 900; ++b) capture.process (buffer, true, true, false);
+        for (int b = 0; b < 900; ++b) { capture.process (buffer, true, true, false); if (b % 48 == 47) juce::Thread::sleep (4); }
         check (capture.state() == Capture::State::recording, "armed starts on play");
         capture.process (buffer, false, true, false);
         juce::File second;
-        capture.onCaptured = [&] (juce::File f, double) { second = f; };
-        pump (500);
+        capture.onCaptured = [&] (juce::File f, double, Capture::Kind) { second = f; };
+        pump (700);
         check (capture.state() == Capture::State::idle && second.existsAsFile(), "a play-through ends when the transport stops");
         second.deleteFile();
 
@@ -80,9 +82,98 @@ int main()
         for (int b = 0; b < 100; ++b) capture.process (buffer, true, true, false);
         capture.process (buffer, false, true, false);
         second = juce::File();
-        pump (500);
+        pump (700);
         check (! second.existsAsFile(), "a take of a second or two is thrown away, not offered as a beat");
         capture.release();
+    }
+
+    std::cout << "Catching the beat just by playing it" << std::endl;
+    {
+        // feeds audio the way a host does while it plays: silence, then the beat, then silence, then stop
+        auto play = [&] (Capture& capture, double leadIn, double sound, double tail, juce::int64 startSample = 0)
+        {
+            juce::AudioBuffer<float> buffer (2, block);
+            double phase = 0;
+            juce::int64 at = startSample;
+            const int total = (int) ((leadIn + sound + tail) * 44100.0 / block);
+            for (int b = 0; b < total; ++b)
+            {
+                const double t = (double) b * block / 44100.0;
+                const bool audible = t >= leadIn && t < leadIn + sound;
+                for (int i = 0; i < block; ++i)
+                {
+                    const float v = audible ? 0.4f * (float) std::sin (phase) : 0.0f;
+                    phase += 2.0 * juce::MathConstants<double>::pi * 330.0 / 44100.0;
+                    buffer.setSample (0, i, v);
+                    buffer.setSample (1, i, v);
+                }
+                capture.process (buffer, true, true, false, at);
+                at += block;
+                if (b % 48 == 47) juce::Thread::sleep (4);          // let the disk keep up, as it does in real time
+            }
+            buffer.clear();
+            capture.process (buffer, false, true, false, at);       // transport stopped
+            return at;
+        };
+
+        Capture capture;
+        juce::File heard;
+        double heardSeconds = 0;
+        Capture::Kind heardKind = Capture::Kind::exported;
+        capture.onCaptured = [&] (juce::File f, double s, Capture::Kind k) { heard = f; heardSeconds = s; heardKind = k; };
+        capture.prepare (44100.0, 2);
+
+        play (capture, 1.5, 24.0, 2.0);
+        pump (1200);
+        check (heard.existsAsFile() && heardKind == Capture::Kind::heard, "a play-through is caught with nothing pressed");
+        check (std::abs (heardSeconds - 24.4) < 0.25, "the silence before and after is trimmed off (" + juce::String (heardSeconds, 2) + " s from 27.5 s played)");
+        heard.deleteFile();
+        heard = juce::File();
+
+        play (capture, 0.0, 9.0, 0.0);
+        pump (900);
+        check (! heard.existsAsFile(), "playing a few seconds of the project is not mistaken for the beat");
+
+        // a loop: playback jumps back to the start without the transport stopping
+        juce::AudioBuffer<float> buffer (2, block);
+        for (int i = 0; i < block; ++i) { buffer.setSample (0, i, 0.3f); buffer.setSample (1, i, -0.3f); }
+        juce::int64 at = 0;
+        for (int b = 0; b < 2200; ++b) { capture.process (buffer, true, true, false, at); at += block; if (b % 48 == 47) juce::Thread::sleep (4); }
+        capture.process (buffer, true, true, false, 0);
+        pump (1200);
+        check (heard.existsAsFile() && heardSeconds > 24.0 && heardSeconds < 27.0, "a jump back to the start ends the take there (" + juce::String (heardSeconds, 2) + " s)");
+        capture.stop();
+        pump (300);
+        heard.deleteFile();
+        capture.release();
+
+        // the rules for what a heard take may replace
+        UploaderProcessor processor;
+        processor.prepareToPlay (44100.0, block);
+        auto& d = processor.draft;
+        play (processor.capture, 0.5, 30.0, 0.5);
+        pump (1300);
+        const auto first = d.audio;
+        check (first.existsAsFile() && std::abs (d.beat.seconds - 30.4) < 0.3 && processor.draftWasHeard, "with nothing on the page, the play-through goes straight on");
+
+        play (processor.capture, 0.0, 21.0, 0.2);
+        pump (1300);
+        check (d.audio == first, "then listening back to a part of it does not replace the full take");
+
+        play (processor.capture, 0.5, 32.0, 0.5);
+        pump (1300);
+        check (d.audio != first && std::abs (d.beat.seconds - 32.4) < 0.3 && ! first.existsAsFile(), "a newer full play-through does, and the old take is cleaned up");
+
+        d.beat.title = "Chosen";
+        processor.draftWasHeard = false;                    // as if this audio had been exported or chosen on purpose
+        const auto chosen = d.audio;
+        play (processor.capture, 0.5, 30.0, 0.5);
+        pump (1300);
+        check (d.audio == chosen && processor.waitingTake.file.existsAsFile(), "audio put there on purpose is never replaced: the new take waits");
+        processor.useWaitingTake();
+        check (d.audio != chosen && d.beat.title == "Chosen" && ! processor.waitingTake.file.existsAsFile(), "Use the new take swaps the audio and keeps the details typed in");
+        d.audio.deleteFile();
+        processor.releaseResources();
     }
 
     std::cout << "Library and catalogs" << std::endl;
@@ -215,6 +306,40 @@ int main()
         const bool h264 = findAtom ("avc1") >= 0;
         check (findAtom ("moov") >= 0 && (h264 || findAtom ("mp4v") >= 0) && findAtom ("mp4a") >= 0 && std::abs (length - 20.0) < 0.6,
                "the video is the full length with picture and sound (" + juce::String (length, 2) + " s, " + (h264 ? "H.264" : "MPEG-4") + ")");
+
+        // the vertical clip: 30 quiet seconds then 40 loud ones, so the clip should start late and be 45 s long
+        const auto longAudio = scratch.getChildFile ("long.wav");
+        {
+            juce::WavAudioFormat wav;
+            auto* stream = longAudio.createOutputStream().release();
+            std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (stream, 44100.0, 2, 16, {}, 0));
+            juce::AudioBuffer<float> one (2, 44100);
+            for (int sec = 0; sec < 70; ++sec)
+            {
+                for (int i = 0; i < 44100; ++i)
+                {
+                    const float v = (sec < 30 ? 0.05f : 0.5f) * (float) std::sin (i * 0.05);
+                    one.setSample (0, i, v);
+                    one.setSample (1, i, v);
+                }
+                writer->writeFromAudioSampleBuffer (one, 0, 44100);
+            }
+        }
+        const double clipStart = media::bestClipStart (longAudio, 45.0);
+        check (clipStart >= 18.0 && clipStart <= 25.0, "the clip is cut from the full part of the beat (starts at " + juce::String (clipStart, 0) + " s)");
+
+        const auto tall = media::composeFrame (cover, beat.title, "Gunna type beat   |   prod. JP", true);
+        const auto tallFile = scratch.getChildFile ("frame-tall.png");
+        { juce::PNGImageFormat png; auto out = tallFile.createOutputStream(); png.writeImageToStream (tall, *out); }
+        const auto clip = scratch.getChildFile ("clip.mp4");
+        const bool clipOk = media::renderVideo (tallFile, longAudio, clip, 45.0, {}, error, clipStart, 1.5);
+        juce::MemoryBlock clipBytes;
+        clip.loadFileAsData (clipBytes);
+        bytes = clipBytes;
+        const int clipHeader = findAtom ("mvhd");
+        const double clipLength = clipHeader >= 0 ? bigEndian (clipHeader + 20) / juce::jmax (1.0, bigEndian (clipHeader + 16)) : 0.0;
+        check (clipOk && tall.getWidth() == 1080 && tall.getHeight() == 1920 && std::abs (clipLength - 45.0) < 0.6,
+               "vertical clip made: 1080 x 1920, " + juce::String (clipLength, 1) + " s " + error);
 
         Settings s2;
         GoogleAuth google (s2);

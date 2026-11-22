@@ -7,7 +7,8 @@ UploaderProcessor::UploaderProcessor()
 {
     newDraft();
     capture.setCatchExports (services().settings.get ("catchExports", "1") == "1");
-    capture.onCaptured = [this] (juce::File file, double seconds) { captured (file, seconds); };
+    capture.setListen (services().settings.get ("listen", "1") == "1");
+    capture.onCaptured = [this] (juce::File file, double seconds, sd::Capture::Kind kind) { captured (file, seconds, kind); };
 }
 
 UploaderProcessor::~UploaderProcessor() { capture.onCaptured = nullptr; }
@@ -15,25 +16,74 @@ UploaderProcessor::~UploaderProcessor() { capture.onCaptured = nullptr; }
 void UploaderProcessor::newDraft()
 {
     draft = sd::Draft();
+    draftWasHeard = false;
     auto& s = services().settings;
     draft.beat.price = s.getNumber ("defaultPrice", 20.0);
     draft.beat.licence = s.get ("defaultLicence", "ffp");
     draft.toBeatStars = s.get ("defaultBeatStars", "0") == "1";
+    draft.toShort = s.get ("defaultShort", "0") == "1";
     draft.publishAt = juce::Time::getCurrentTime() + juce::RelativeTime::days (1);
 }
 
-void UploaderProcessor::captured (juce::File file, double seconds)
+static bool isOurTake (const juce::File& file)
+{
+    return file.existsAsFile() && file.isAChildOf (sd::Settings::libraryDir().getChildFile ("Captures"));
+}
+
+void UploaderProcessor::adopt (juce::File file, double seconds, bool heard)
 {
     // a new take replaces the audio of a beat that has not been saved yet; a saved beat is left alone
     if (draft.beat.id.isNotEmpty())
         newDraft();
-    else if (draft.audio.existsAsFile() && draft.audio.isAChildOf (sd::Settings::libraryDir().getChildFile ("Captures")))
+    else if (isOurTake (draft.audio) && draft.audio != file)
         draft.audio.deleteFile();
 
     draft.audio = file;
     draft.beat.seconds = seconds;
+    draftWasHeard = heard;
     if (draft.beat.bpm <= 0.0 && bpm.load() > 0.0)
         draft.beat.bpm = std::round (bpm.load());
+}
+
+void UploaderProcessor::captured (juce::File file, double seconds, sd::Capture::Kind kind)
+{
+    // Exporting or pressing Record is asking for this take, so it always goes straight onto the page.
+    // A take that was only heard is a guess, and it never pushes aside something chosen on purpose.
+    if (kind != sd::Capture::Kind::heard)
+    {
+        if (isOurTake (waitingTake.file)) waitingTake.file.deleteFile();
+        waitingTake = {};
+        adopt (file, seconds, false);
+    }
+    else if (! draft.audio.existsAsFile())
+    {
+        adopt (file, seconds, true);
+    }
+    else if (draft.beat.id.isEmpty() && draftWasHeard)
+    {
+        // playing a short section does not replace a full play-through; a fuller or newer full pass does
+        if (seconds >= draft.beat.seconds * 0.75) adopt (file, seconds, true);
+        else                                      file.deleteFile();
+    }
+    else if (! waitingTake.file.existsAsFile() || seconds >= waitingTake.seconds * 0.75)
+    {
+        if (isOurTake (waitingTake.file)) waitingTake.file.deleteFile();
+        waitingTake = { file, seconds };
+    }
+    else
+    {
+        file.deleteFile();
+    }
+
+    draftChanged();
+}
+
+void UploaderProcessor::useWaitingTake()
+{
+    if (! waitingTake.file.existsAsFile()) return;
+    const auto take = waitingTake;
+    waitingTake = {};
+    adopt (take.file, take.seconds, true);
     draftChanged();
 }
 
@@ -54,6 +104,7 @@ void UploaderProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 {
     juce::ScopedNoDenormals noDenormals;
     bool playing = false, hasTransport = false;
+    juce::int64 hostSample = -1;
 
     if (auto* head = getPlayHead())
         if (auto position = head->getPosition())
@@ -61,9 +112,10 @@ void UploaderProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             hasTransport = true;
             playing = position->getIsPlaying();
             if (auto tempo = position->getBpm()) bpm.store (*tempo);
+            if (auto at = position->getTimeInSamples()) hostSample = *at;
         }
 
-    capture.process (buffer, playing, hasTransport, isNonRealtime());
+    capture.process (buffer, playing, hasTransport, isNonRealtime(), hostSample);
 }
 
 juce::AudioProcessorEditor* UploaderProcessor::createEditor() { return new UploaderEditor (*this); }
@@ -77,6 +129,7 @@ void UploaderProcessor::getStateInformation (juce::MemoryBlock& data)
     o->setProperty ("privacy", draft.privacy);
     o->setProperty ("youtube", draft.toYouTube);
     o->setProperty ("beatstars", draft.toBeatStars);
+    o->setProperty ("short", draft.toShort);
     const auto text = juce::JSON::toString (juce::var (o), true);
     data.replaceAll (text.toRawUTF8(), text.getNumBytesAsUTF8());
 }
@@ -93,6 +146,8 @@ void UploaderProcessor::setStateInformation (const void* data, int size)
     draft.privacy = v.getProperty ("privacy", "public").toString();
     draft.toYouTube = (bool) v.getProperty ("youtube", true);
     draft.toBeatStars = (bool) v.getProperty ("beatstars", false);
+    draft.toShort = (bool) v.getProperty ("short", false);
+    draftWasHeard = false;
 
     // the project may be older than the library: pick up the saved version of this beat if there is one
     if (auto* saved = services().library.find (draft.beat.id))

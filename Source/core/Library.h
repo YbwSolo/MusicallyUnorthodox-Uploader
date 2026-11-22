@@ -9,7 +9,7 @@ struct Beat
     juce::String id, title, artist, key, tags, description, catalogId;
     juce::String licence { "ffp" };            // "ffp" = free for profit, "free" = free for non-profit (lease to release)
     juce::String audioFile, coverFile;         // file names inside the beat's folder
-    juce::String youtubeId, youtubeUrl, beatstarsUrl;
+    juce::String youtubeId, youtubeUrl, shortUrl, beatstarsUrl;
     double bpm = 0, price = 20, seconds = 0;
     juce::int64 createdMs = 0, uploadedMs = 0;
 

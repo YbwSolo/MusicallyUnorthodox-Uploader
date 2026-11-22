@@ -37,8 +37,16 @@ public:
     void draftChanged()                                     { sendChangeMessage(); }
     double hostBpm() const                                  { return bpm.load(); }
 
+    /** A play-through caught while a beat was already on the page. It waits here until "Use it" is pressed,
+        so listening back to the project never replaces what is being worked on. */
+    struct Take { juce::File file; double seconds = 0; };
+    Take waitingTake;
+    void useWaitingTake();
+    bool draftWasHeard = false;         // the draft's audio came from listening, so a fuller play-through may replace it
+
 private:
-    void captured (juce::File, double seconds);
+    void captured (juce::File, double seconds, sd::Capture::Kind);
+    void adopt (juce::File, double seconds, bool heard);
 
     juce::SharedResourcePointer<sd::Services> shared;
     std::atomic<double> bpm { 0.0 };

@@ -14,6 +14,7 @@ juce::var Beat::toVar() const
     o->setProperty ("audio", audioFile);       o->setProperty ("cover", coverFile);
     o->setProperty ("youtubeId", youtubeId);   o->setProperty ("youtubeUrl", youtubeUrl);
     o->setProperty ("beatstarsUrl", beatstarsUrl);
+    o->setProperty ("shortUrl", shortUrl);
     o->setProperty ("bpm", bpm);               o->setProperty ("price", price);
     o->setProperty ("seconds", seconds);
     o->setProperty ("created", createdMs);     o->setProperty ("uploaded", uploadedMs);
@@ -30,6 +31,7 @@ Beat Beat::fromVar (const juce::var& v)
     b.audioFile = v["audio"].toString();       b.coverFile = v["cover"].toString();
     b.youtubeId = v["youtubeId"].toString();   b.youtubeUrl = v["youtubeUrl"].toString();
     b.beatstarsUrl = v["beatstarsUrl"].toString();
+    b.shortUrl = v["shortUrl"].toString();
     b.bpm = (double) v.getProperty ("bpm", 0.0);
     b.price = (double) v.getProperty ("price", 20.0);
     b.seconds = (double) v.getProperty ("seconds", 0.0);

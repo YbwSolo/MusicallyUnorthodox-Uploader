@@ -97,6 +97,27 @@ juce::String youtubeDescription (const Beat& b, const Settings& s)
     return clean (lines.joinIntoString ("\n")).substring (0, 4900);
 }
 
+juce::String shortTitle (const Beat& b)
+{
+    const auto name = b.title.trim().isEmpty() ? juce::String ("Untitled") : b.title.trim();
+    const auto tail = juce::String (" #shorts #typebeat");
+    auto title = "\"" + name + "\" " + (b.artist.trim().isNotEmpty() ? b.artist.trim() + " Type Beat" : juce::String ("Type Beat"));
+    return clean (title).substring (0, 100 - tail.length()) + tail;
+}
+
+juce::String shortDescription (const Beat& b, const Settings& s, const juce::String& fullVideoUrl)
+{
+    const auto who = producer (s);
+    const auto link = buyLink (b, s);
+    juce::StringArray lines;
+    lines.add ("\"" + b.title.trim() + "\"" + (who.isNotEmpty() ? " (prod. " + who + ")" : juce::String()));
+    if (fullVideoUrl.isNotEmpty()) lines.add ("Full beat: " + fullVideoUrl);
+    if (link.isNotEmpty())         lines.add ("Download and leases: " + link);
+    lines.add (b.freeForProfit() ? "Free for profit: credit " + (who.isNotEmpty() ? "prod. " + who : juce::String ("the producer")) + " and do not claim Content ID."
+                                 : juce::String ("Free for non-profit use. A lease is needed to release it."));
+    return clean (lines.joinIntoString ("\n"));
+}
+
 juce::StringArray youtubeTags (const Beat& b)
 {
     juce::StringArray tags;

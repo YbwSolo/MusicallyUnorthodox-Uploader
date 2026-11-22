@@ -12,6 +12,8 @@ namespace texts
     juce::String youtubeTitle (const Beat&);
     juce::String youtubeDescription (const Beat&, const Settings&);
     juce::StringArray youtubeTags (const Beat&);
+    juce::String shortTitle (const Beat&);
+    juce::String shortDescription (const Beat&, const Settings&, const juce::String& fullVideoUrl);
     juce::String licenceName (const Beat&);                 // "FREE FOR PROFIT" / "FREE"
     juce::String licenceSummary (bool freeForProfit);       // one line, shown under the switch
     juce::String buyLink (const Beat&, const Settings&);

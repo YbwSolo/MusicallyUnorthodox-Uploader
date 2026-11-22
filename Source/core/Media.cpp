@@ -105,13 +105,15 @@ static juce::Image blurred (const juce::Image& source, int w, int h)
     return mid.rescaled (w, h, juce::Graphics::highResamplingQuality);
 }
 
-juce::Image composeFrame (const juce::Image& cover, const juce::String& title, const juce::String& subtitle)
+juce::Image composeFrame (const juce::Image& cover, const juce::String& title, const juce::String& subtitle, bool tall)
 {
-    const int w = 1920, h = 1080;
+    const int w = tall ? 1080 : 1920, h = tall ? 1920 : 1080;
     juce::Image frame (juce::Image::RGB, w, h, true);
     juce::Graphics g (frame);
     g.fillAll (juce::Colours::black);
 
+    // on a tall frame the phone apps cover the bottom and the right edge, so everything sits in the upper middle
+    juce::Rectangle<float> art;
     if (cover.isValid())
     {
         // fill the frame with a blurred, darkened copy so there are never black bars
@@ -122,10 +124,10 @@ juce::Image composeFrame (const juce::Image& cover, const juce::String& title, c
         g.drawImageAt (blurred (middle, w, h), 0, 0);
         g.fillAll (juce::Colours::black.withAlpha (0.45f));
 
-        const float side = 760.0f;
+        const float side = tall ? 860.0f : 760.0f;
         const float fit = juce::jmin (side / cover.getWidth(), side / cover.getHeight());
-        juce::Rectangle<float> art (0, 0, cover.getWidth() * fit, cover.getHeight() * fit);
-        art.setCentre (w * 0.5f, h * 0.5f - 40.0f);
+        art = juce::Rectangle<float> (0, 0, cover.getWidth() * fit, cover.getHeight() * fit);
+        art.setCentre (w * 0.5f, tall ? h * 0.40f : h * 0.5f - 40.0f);
 
         juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 60, { 0, 24 }).drawForRectangle (g, art.toNearestInt());
         juce::Path clip;
@@ -142,16 +144,19 @@ juce::Image composeFrame (const juce::Image& cover, const juce::String& title, c
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1a1a1a), 0, 0, juce::Colours::black, 0, (float) h, false));
         g.fillAll();
         g.setColour (theme::yellow);
-        g.fillRect (juce::Rectangle<float> (w * 0.5f - 60.0f, h * 0.5f - 150.0f, 120.0f, 8.0f));
+        g.fillRect (juce::Rectangle<float> (w * 0.5f - 60.0f, h * (tall ? 0.40f : 0.5f) - 150.0f, 120.0f, 8.0f));
     }
 
-    const float textY = cover.isValid() ? h - 170.0f : h * 0.5f - 110.0f;
+    const int margin = tall ? 90 : 120;
+    const float titleSize = cover.isValid() ? (tall ? 84.0f : 64.0f) : 120.0f;
+    const float textY = cover.isValid() ? (tall ? art.getBottom() + 70.0f : (float) h - 170.0f) : h * (tall ? 0.40f : 0.5f) - 110.0f;
+    const int titleHeight = (int) (titleSize * 1.2f);
     g.setColour (juce::Colours::white);
-    g.setFont (theme::headline (cover.isValid() ? 64.0f : 120.0f));
-    g.drawFittedText (title.toUpperCase(), juce::Rectangle<int> (120, (int) textY, w - 240, cover.isValid() ? 76 : 150), juce::Justification::centred, 1);
+    g.setFont (theme::headline (titleSize));
+    g.drawFittedText (title.toUpperCase(), juce::Rectangle<int> (margin, (int) textY, w - margin * 2, cover.isValid() ? titleHeight : 150), juce::Justification::centred, 1);
     g.setColour (theme::yellow);
-    g.setFont (theme::bodyBold (30.0f));
-    g.drawFittedText (subtitle, juce::Rectangle<int> (120, (int) textY + (cover.isValid() ? 84 : 170), w - 240, 40), juce::Justification::centred, 1);
+    g.setFont (theme::bodyBold (tall ? 36.0f : 30.0f));
+    g.drawFittedText (subtitle, juce::Rectangle<int> (margin, (int) textY + (cover.isValid() ? titleHeight + 10 : 170), w - margin * 2, 48), juce::Justification::centred, 1);
     return frame;
 }
 
@@ -164,7 +169,7 @@ juce::Image squareCover (const juce::Image& cover, int size)
 }
 
 bool renderVideo (const juce::File& frame, const juce::File& audio, const juce::File& outMp4, double seconds,
-                  Progress progress, juce::String& error)
+                  Progress progress, juce::String& error, double startAt, double fadeOut)
 {
     // whichever H.264 encoder this ffmpeg has, best first; MPEG-4 always exists and YouTube accepts it too
     juce::Array<juce::StringArray> encoders;
@@ -174,27 +179,78 @@ bool renderVideo (const juce::File& frame, const juce::File& audio, const juce::
     if (hasEncoder ("libopenh264"))         encoders.add ({ "-c:v", "libopenh264", "-b:v", "3000k" });
     encoders.add ({ "-c:v", "mpeg4", "-q:v", "3" });
 
-    for (auto& encoder : encoders)
+    // the fade is tried first and dropped if this ffmpeg cannot do it: a clip that ends abruptly beats no clip
+    for (const bool fade : { fadeOut > 0.0 && seconds > fadeOut * 2.0, false })
     {
-        outMp4.deleteFile();
-        juce::StringArray args { "-hide_banner", "-y", "-loop", "1", "-framerate", "2", "-i", frame.getFullPathName(),
-                                 "-i", audio.getFullPathName() };
-        args.addArray (encoder);
-        args.addArray ({ "-pix_fmt", "yuv420p", "-r", "2", "-c:a", "aac", "-b:a", "320k", "-ar", "48000" });
-        // the length is given outright: some encoders hold frames back, and "stop with the audio" alone
-        // then leaves seconds of silent picture on the end
-        if (seconds > 0.0) args.addArray ({ "-t", juce::String (seconds, 3) });
-        args.addArray ({ "-shortest", "-movflags", "+faststart", outMp4.getFullPathName() });
+        for (auto& encoder : encoders)
+        {
+            outMp4.deleteFile();
+            juce::StringArray args { "-hide_banner", "-y", "-loop", "1", "-framerate", "2", "-i", frame.getFullPathName() };
+            if (startAt > 0.0) args.addArray ({ "-ss", juce::String (startAt, 3) });
+            args.addArray ({ "-i", audio.getFullPathName() });
+            args.addArray (encoder);
+            args.addArray ({ "-pix_fmt", "yuv420p", "-r", "2", "-c:a", "aac", "-b:a", "320k", "-ar", "48000" });
+            if (fade) args.addArray ({ "-af", "afade=t=out:st=" + juce::String (seconds - fadeOut, 3) + ":d=" + juce::String (fadeOut, 3) });
+            // the length is given outright: some encoders hold frames back, and "stop with the audio" alone
+            // then leaves seconds of silent picture on the end
+            if (seconds > 0.0) args.addArray ({ "-t", juce::String (seconds, 3) });
+            args.addArray ({ "-shortest", "-movflags", "+faststart", outMp4.getFullPathName() });
 
-        error.clear();
-        if (run (args, seconds, progress, error) && outMp4.getSize() > 1024)
-            return true;
-        if (error == "Cancelled")
-            return false;
+            error.clear();
+            if (run (args, seconds, progress, error) && outMp4.getSize() > 1024)
+                return true;
+            if (error == "Cancelled")
+                return false;
+        }
+
+        if (! fade) break;
     }
 
     if (error.isEmpty()) error = "The video could not be made.";
     return false;
+}
+
+double bestClipStart (const juce::File& audio, double clipSeconds)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto reader = std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (audio));
+    if (reader == nullptr || reader->sampleRate <= 0.0) return 0.0;
+
+    const int perSecond = (int) reader->sampleRate;
+    const int totalSeconds = (int) (reader->lengthInSamples / perSecond);
+    const int window = (int) std::ceil (clipSeconds);
+    if (totalSeconds <= window) return 0.0;
+
+    // how much sound there is in each second of the beat
+    juce::Array<double> energy;
+    juce::AudioBuffer<float> buffer ((int) reader->numChannels, perSecond);
+    for (int second = 0; second < totalSeconds; ++second)
+    {
+        reader->read (&buffer, 0, perSecond, (juce::int64) second * perSecond, true, true);
+        double sum = 0.0;
+        for (int c = 0; c < buffer.getNumChannels(); ++c)
+        {
+            const double rms = buffer.getRMSLevel (c, 0, perSecond);
+            sum += rms * rms;
+        }
+        energy.add (sum);
+    }
+
+    double running = 0.0, best = -1.0;
+    int bestStart = 0;
+    for (int second = 0; second < totalSeconds; ++second)
+    {
+        running += energy[second];
+        if (second >= window) running -= energy[second - window];
+        // the first stretch that is clearly the fullest wins, so the clip starts where the beat first comes in fully
+        if (second >= window - 1 && running > best * 1.03)
+        {
+            best = running;
+            bestStart = second - window + 1;
+        }
+    }
+    return (double) bestStart;
 }
 
 bool encodeMp3 (const juce::File& audio, const juce::File& outMp3, double seconds, Progress progress, juce::String& error)
