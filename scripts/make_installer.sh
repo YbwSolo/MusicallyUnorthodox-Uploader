@@ -39,9 +39,37 @@ codesign --force --deep --sign - "pkgroot/Library/Audio/Plug-Ins/Components/$NAM
 codesign --force --deep --sign - "pkgroot/Library/Audio/Plug-Ins/VST3/$NAME.vst3" || true
 [ -d "pkgroot/Applications/$NAME.app" ] && codesign --force --deep --sign - "pkgroot/Applications/$NAME.app" || true
 
-pkgbuild --root pkgroot --identifier com.musicallyunorthodox.uploader.pkg --version "$VERSION" \
+# After installing, hand the plugin and its video tool to the person at the keyboard, so the plugin can update
+# itself later without asking for an administrator password.
+rm -rf pkgscripts && mkdir pkgscripts
+cat > pkgscripts/postinstall <<'POST'
+#!/bin/bash
+OWNER="$(stat -f%Su /dev/console 2>/dev/null)"
+if [ -n "$OWNER" ] && [ "$OWNER" != "root" ]; then
+  chown -R "$OWNER" "/Library/Audio/Plug-Ins/Components/MU Uploader.component" 2>/dev/null || true
+  chown -R "$OWNER" "/Library/Audio/Plug-Ins/VST3/MU Uploader.vst3" 2>/dev/null || true
+  chown -R "$OWNER" "/Library/Application Support/MU Uploader" 2>/dev/null || true
+fi
+exit 0
+POST
+chmod +x pkgscripts/postinstall
+
+pkgbuild --root pkgroot --scripts pkgscripts --identifier com.musicallyunorthodox.uploader.pkg --version "$VERSION" \
          --install-location / "dist/MUUploader-$VERSION-build$BUILD.pkg"
 cp "dist/MUUploader-$VERSION-build$BUILD.pkg" dist/MUUploader-Mac.pkg
-rm -rf pkgroot
+
+# What the plugin downloads when it updates itself: the two plugin bundles and the video tool, zipped,
+# and a small feed saying which build is newest and what the zip's checksum is.
+rm -rf update && mkdir -p update/Support
+cp -R pkgroot/Library/Audio/Plug-Ins/Components update/
+cp -R pkgroot/Library/Audio/Plug-Ins/VST3 update/
+[ -f "pkgroot/Library/Application Support/$NAME/ffmpeg" ] && cp "pkgroot/Library/Application Support/$NAME/ffmpeg" update/Support/ffmpeg
+( cd update && zip -qry ../dist/MUUploader-bundles.zip Components VST3 Support )
+SHA="$(shasum -a 256 dist/MUUploader-bundles.zip | cut -d' ' -f1)"
+BUILDNUM="$BUILD"; [ "$BUILD" = "local" ] && BUILDNUM=0
+printf '{"build": %s, "version": "%s", "file": "MUUploader-bundles.zip", "sha256": "%s"}\n' "$BUILDNUM" "$VERSION" "$SHA" > dist/latest.json
+
+rm -rf pkgroot pkgscripts update
 echo "Installer written to dist/"
 ls -la dist
+cat dist/latest.json

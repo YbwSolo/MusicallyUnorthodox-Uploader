@@ -105,11 +105,21 @@ public:
             if (auto stream = file.createOutputStream()) png.writeImageToStream (shot, *stream);
         }
 
-        const auto frame = media::composeFrame (juce::ImageFileFormat::loadFrom (d.cover), "Get It", "Gunna type beat   |   prod. JP");
+        media::FrameText words;
+        words.title = "Get It"; words.subtitle = "Gunna type beat"; words.label = "FREE FOR PROFIT"; words.credit = "prod. JP";
+        words.chips = { "161 BPM", "E MINOR" };
+        const auto coverImage = juce::ImageFileFormat::loadFrom (d.cover);
         juce::PNGImageFormat png;
-        auto frameFile = out.getChildFile ("6-video-frame.png");
-        frameFile.deleteFile();
-        if (auto stream = frameFile.createOutputStream()) png.writeImageToStream (frame, *stream);
+        auto save = [&] (const juce::Image& image, const juce::String& name)
+        {
+            auto file = out.getChildFile (name);
+            file.deleteFile();
+            if (auto stream = file.createOutputStream()) png.writeImageToStream (image, *stream);
+        };
+        save (media::composeFrame (coverImage, words).image, "6-video-frame.png");
+        save (media::composeFrame (coverImage, words, true).image, "7-video-frame-tall.png");
+        words.title = "Midnight Run Forever";
+        save (media::composeFrame ({}, words).image, "8-video-frame-no-cover.png");
 
         quit();
     }

@@ -5,3 +5,6 @@ pkgroot/
 pkgscripts/
 preview/
 .DS_Store
+ffmpeg-work/
+ffmpeg-build/
+update/

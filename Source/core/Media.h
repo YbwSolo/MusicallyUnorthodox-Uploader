@@ -12,15 +12,34 @@ namespace media
     juce::File findFFmpeg();
     bool available();
 
-    /** The picture shown for the whole video: the cover on a blurred copy of itself, with the title.
-        1920 x 1080 for the YouTube video, or 1080 x 1920 (tall) for Shorts, TikTok and Reels. */
-    juce::Image composeFrame (const juce::Image& cover, const juce::String& title, const juce::String& subtitle, bool tall = false);
+    /** The words that go on the video picture. */
+    struct FrameText
+    {
+        juce::String title, subtitle, label, credit;        // "Get It", "Gunna type beat", "FREE FOR PROFIT", "prod. JP"
+        juce::StringArray chips;                            // "161 BPM", "E MINOR"
+    };
+
+    /** The video picture, and where the moving parts are drawn over it: the bars that follow the music and the
+        line that fills up as the beat plays. Its accent colour is taken from the cover so every video looks its own. */
+    struct Frame
+    {
+        juce::Image image;
+        juce::Rectangle<int> bars;
+        int bands = 0, progressY = 0, progressHeight = 8;
+        juce::Colour accent;
+    };
+
+    /** 1920 x 1080 for the YouTube video, or 1080 x 1920 (tall) for Shorts, TikTok and Reels. */
+    Frame composeFrame (const juce::Image& cover, const FrameText&, bool tall = false);
+    juce::Colour accentOf (const juce::Image& cover);
 
     /** Square artwork for stores (BeatStars wants a square), cropped from the middle of the cover. */
     juce::Image squareCover (const juce::Image& cover, int size);
 
-    /** startAt and fadeOut are for clips: begin that far into the beat, and fade the last moments out. */
-    bool renderVideo (const juce::File& frame, const juce::File& audio, const juce::File& outMp4, double seconds,
+    /** Makes the video: the picture with bars moving to the music and a line showing how far the beat has played.
+        If this ffmpeg cannot do the moving parts, the video is made with the still picture instead.
+        startAt and fadeOut are for clips: begin that far into the beat, and fade the last moments out. */
+    bool renderVideo (const Frame&, const juce::File& audio, const juce::File& outMp4, double seconds,
                       Progress progress, juce::String& error, double startAt = 0.0, double fadeOut = 0.0);
 
     /** Where the loudest, fullest stretch of that length begins: usually the hook, which is what a short clip should show. */

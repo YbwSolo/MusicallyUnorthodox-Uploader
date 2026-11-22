@@ -37,6 +37,7 @@ private:
     juce::String toastText;
     bool toastIsError = false;
     juce::uint32 toastUntil = 0;
+    int toldAboutBuild = 0;
 
     struct TextOverlay;
     std::unique_ptr<TextOverlay> overlay;

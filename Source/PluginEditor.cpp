@@ -128,10 +128,12 @@ UploaderEditor::UploaderEditor (UploaderProcessor& p)
     app.services.contacts.addChangeListener (this);
     app.services.google.addChangeListener (this);
     app.services.publisher.addChangeListener (this);
+    app.services.updater.addChangeListener (this);
 
     setSize (920, 640);
     showPage (pageUpload);
     startTimerHz (4);
+    app.services.updater.autoCheck();
 }
 
 UploaderEditor::~UploaderEditor()
@@ -141,6 +143,7 @@ UploaderEditor::~UploaderEditor()
     app.services.contacts.removeChangeListener (this);
     app.services.google.removeChangeListener (this);
     app.services.publisher.removeChangeListener (this);
+    app.services.updater.removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
 
@@ -255,6 +258,17 @@ void UploaderEditor::changeListenerCallback (juce::ChangeBroadcaster* source)
             app.draft().beat = *saved;
     }
 
+    if (source == &app.services.updater)
+    {
+        // say once that a new version is there; installing it is one button in Settings
+        const auto update = app.services.updater.getState();
+        if (update.phase == UpdateState::Phase::available && toldAboutBuild != update.latest.build && current != pageSettings)
+        {
+            toldAboutBuild = update.latest.build;
+            toast ("Version " + update.latest.version + " is ready. Install it in Settings.", false);
+        }
+    }
+
     if (source == &app.services.google && app.services.google.lastError().isNotEmpty())
         toast (app.services.google.lastError(), true);
 
@@ -321,11 +335,17 @@ void UploaderEditor::upload()
     if (job.youtube || job.clip)
     {
         const auto producer = s.settings.get ("producer").trim();
-        const auto subtitle = (d.beat.artist.trim().isNotEmpty() ? d.beat.artist.trim() + " type beat" : juce::String ("Type beat"))
-                            + (producer.isNotEmpty() ? "   |   prod. " + producer : juce::String());
+        media::FrameText words;
+        words.title = d.beat.title;
+        words.subtitle = d.beat.artist.trim().isNotEmpty() ? d.beat.artist.trim() + " type beat" : juce::String ("Type beat");
+        words.label = texts::licenceName (d.beat);
+        if (producer.isNotEmpty())           words.credit = "prod. " + producer;
+        if (d.beat.bpm > 0)                  words.chips.add (juce::String (juce::roundToInt (d.beat.bpm)) + " BPM");
+        if (d.beat.key.trim().isNotEmpty())  words.chips.add (d.beat.key.trim().toUpperCase());
+
         const auto cover = juce::ImageFileFormat::loadFrom (d.cover);
-        if (job.youtube) job.frame = media::composeFrame (cover, d.beat.title, subtitle);
-        if (job.clip)    job.tallFrame = media::composeFrame (cover, d.beat.title, subtitle, true);
+        if (job.youtube) job.frame = media::composeFrame (cover, words);
+        if (job.clip)    job.tallFrame = media::composeFrame (cover, words, true);
     }
 
     if (! s.publisher.start (job))

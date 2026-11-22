@@ -7,6 +7,7 @@ set(MUU_BUILD_NUMBER "0" CACHE STRING "Build number (CI run number); 0 for local
 # still builds, and the two values can be typed into Settings > Advanced instead.
 set(MUU_GOOGLE_CLIENT_ID "" CACHE STRING "Google OAuth client ID (desktop app)")
 set(MUU_GOOGLE_CLIENT_SECRET "" CACHE STRING "Google OAuth client secret")
+set(MUU_UPDATE_BASE_URL "https://github.com/YbwSolo/MusicallyUnorthodox-Uploader/releases/latest/download" CACHE STRING "Where the plugin looks for latest.json")
 project(MUUploader VERSION ${MUU_VERSION_BASE}.${MUU_BUILD_NUMBER} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -73,6 +74,7 @@ set(MUU_CORE_SOURCES
     Source/core/Contacts.cpp
     Source/core/Publisher.cpp
     Source/core/Assistant.cpp
+    Source/core/Updater.cpp
     Source/ui/Theme.cpp)
 
 target_sources(MUUploader PRIVATE
@@ -97,7 +99,10 @@ target_compile_definitions(MUUploader PUBLIC
     JUCE_USE_OGGVORBIS=0
     JUCE_USE_MP3AUDIOFORMAT=1
     MUU_GOOGLE_CLIENT_ID="${MUU_GOOGLE_CLIENT_ID}"
-    MUU_GOOGLE_CLIENT_SECRET="${MUU_GOOGLE_CLIENT_SECRET}")
+    MUU_GOOGLE_CLIENT_SECRET="${MUU_GOOGLE_CLIENT_SECRET}"
+    MUU_BUILD_NUMBER=${MUU_BUILD_NUMBER}
+    MUU_VERSION_STRING="${PROJECT_VERSION}"
+    MUU_UPDATE_BASE_URL="${MUU_UPDATE_BASE_URL}")
 
 target_link_libraries(MUUploader PRIVATE
     MUUAssets

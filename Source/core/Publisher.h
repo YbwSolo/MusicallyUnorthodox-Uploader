@@ -2,6 +2,7 @@
 #include "Library.h"
 #include "YouTube.h"
 #include "Contacts.h"
+#include "Updater.h"
 
 namespace sd
 {
@@ -25,7 +26,7 @@ public:
         juce::String beatId;
         bool youtube = false, beatstarsPack = false, clip = false;
         YouTubeRequest request, shortRequest;       // the Short's description gets the link to the full video added
-        juce::Image frame, tallFrame;
+        media::Frame frame, tallFrame;
     };
 
     Publisher (Library&, Settings&, GoogleAuth&);
@@ -69,5 +70,6 @@ struct Services
     Contacts contacts { Settings::appDataDir().getChildFile ("contacts.json") };
     GoogleAuth google { settings };
     Publisher publisher { library, settings, google };
+    Updater updater { settings };
 };
 }

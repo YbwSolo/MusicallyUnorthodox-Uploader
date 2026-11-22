@@ -38,7 +38,27 @@ jobs:
           sudo mkdir -p "/Library/Application Support/MU Uploader"
           sudo cp ffmpeg-build/ffmpeg "/Library/Application Support/MU Uploader/ffmpeg"
           BIN="$(find build -type f -name MUUTests -perm +111 | head -1)"
-          HOME="$RUNNER_TEMP/muu-home" "$BIN"
+          HOME="$RUNNER_TEMP/muu-home" MUU_KEEP="$RUNNER_TEMP/keep-arm64" "$BIN"
+
+      - name: The same tests as an Intel Mac runs them (also how Logic under Rosetta does)
+        run: |
+          softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+          BIN="$(find build -type f -name MUUTests -perm +111 | head -1)"
+          arch -x86_64 env HOME="$RUNNER_TEMP/muu-home-intel" MUU_KEEP="$RUNNER_TEMP/keep-x86_64" "$BIN"
+
+      - name: Check the colours of the finished videos
+        run: |
+          # the videos are decoded with a full ffmpeg and compared with the picture they were made from;
+          # a healthy video scores about 30, one with wrong colours about 10
+          brew install ffmpeg >/dev/null 2>&1 || true
+          FULL="$(which ffmpeg)"
+          for KIND in arm64 x86_64; do
+            DIR="$RUNNER_TEMP/keep-$KIND"
+            SCORE=$("$FULL" -hide_banner -i "$DIR/video.mp4" -loop 1 -i "$DIR/picture.png" -lavfi "[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]psnr" -frames:v 60 -f null - 2>&1 | grep -o "average:[0-9.]*" | tail -1 | cut -d: -f2)
+            INFO=$("$FULL" -hide_banner -i "$DIR/video.mp4" 2>&1 | grep "Video:" | sed 's/^ *//' | cut -c1-110)
+            echo "$KIND: picture match $SCORE | $INFO"
+            python3 -c "import sys; sys.exit(0 if float('${SCORE:-0}') > 22 else 1)" || { echo "The $KIND video does not look like its picture"; exit 1; }
+          done
 
       - name: AU validation
         run: |
@@ -65,7 +85,10 @@ jobs:
 
             In the DAW, put MU Uploader last on the master.
           make_latest: true
-          files: dist/MUUploader-Mac.pkg
+          files: |
+            dist/MUUploader-Mac.pkg
+            dist/MUUploader-bundles.zip
+            dist/latest.json
 
   windows:
     needs: mac

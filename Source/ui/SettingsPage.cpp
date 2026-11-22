@@ -48,7 +48,13 @@ public:
         packByDefault.setToggleState (app.services.settings.get ("defaultBeatStars", "0") == "1", juce::dontSendNotification);
         packByDefault.onClick = [this] { app.services.settings.set ("defaultBeatStars", packByDefault.getToggleState() ? "1" : "0"); };
 
-        for (auto* b : { &connect, &openFolder, &advanced }) addAndMakeVisible (*b);
+        for (auto* b : { &connect, &openFolder, &advanced, &update }) addAndMakeVisible (*b);
+        update.onClick = [this]
+        {
+            auto& u = app.services.updater;
+            if (u.getState().phase == UpdateState::Phase::available) u.installNow(); else u.checkNow();
+            refresh();
+        };
         connect.onClick = [this]
         {
             auto& g = app.services.google;
@@ -85,16 +91,25 @@ public:
 
         g.setColour (theme::textMute);
         g.setFont (theme::body (11.5f));
-        g.drawText (juce::String ("Version ") + JucePlugin_VersionString + (media::available() ? "" : "   The video tool is missing: run the installer again."),
-                    footerArea, juce::Justification::centredLeft);
+        const auto updating = app.services.updater.getState();
+        juce::String note = updating.message;
+        if (updating.phase == UpdateState::Phase::downloading && updating.progress > 0.0f)
+            note << "  " << juce::roundToInt (updating.progress * 100.0f) << "%";
+        if (! media::available()) note = "The video tool is missing: run the installer again.";
+        const bool attention = updating.phase == UpdateState::Phase::available || updating.phase == UpdateState::Phase::installed;
+        g.setColour (updating.phase == UpdateState::Phase::failed || ! media::available() ? theme::bad : (attention ? theme::yellow : theme::textMute));
+        g.drawFittedText ("Version " + Updater::currentVersion() + (note.isNotEmpty() ? "     " + note : juce::String()),
+                          footerArea, juce::Justification::centredLeft, 2);
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (24, 0);
         r.removeFromTop (84);
-        r.removeFromBottom (16);
-        footerArea = r.removeFromBottom (18);
+        r.removeFromBottom (14);
+        footerArea = r.removeFromBottom (32);
+        update.setBounds (footerArea.removeFromRight (158));
+        footerArea.removeFromRight (14);
 
         youtubeArea = r.removeFromTop (68);
         connect.setBounds (youtubeArea.reduced (16, 18).removeFromRight (124));
@@ -146,6 +161,12 @@ public:
         connect.setButtonText (g.busy() ? "Cancel" : (g.signedIn() ? "Disconnect" : "Connect YouTube"));
         if (g.signedIn() || g.busy()) connect.getProperties().remove ("primary"); else theme::makePrimary (connect);
         advanced.setButtonText (showAdvanced ? "Hide advanced" : "Advanced");
+
+        const auto phase = app.services.updater.getState().phase;
+        const bool working = phase == UpdateState::Phase::checking || phase == UpdateState::Phase::downloading || phase == UpdateState::Phase::installing;
+        update.setButtonText (phase == UpdateState::Phase::available ? "Install the update" : "Check for updates");
+        update.setEnabled (! working && phase != UpdateState::Phase::installed);
+        if (phase == UpdateState::Phase::available) theme::makePrimary (update); else update.getProperties().remove ("primary");
         repaint();
     }
 
@@ -161,7 +182,7 @@ private:
     juce::ToggleButton listen { "Catch the beat while it plays (no export or record needed)" },
                        catchExports { "Catch the beat automatically when the DAW exports it" },
                        packByDefault { "Always pack the files for BeatStars when uploading" };
-    juce::TextButton connect { "Connect YouTube" }, openFolder { "Open beats folder" }, advanced { "Advanced" };
+    juce::TextButton connect { "Connect YouTube" }, openFolder { "Open beats folder" }, advanced { "Advanced" }, update { "Check for updates" };
     juce::Rectangle<int> youtubeArea, footerArea;
     bool showAdvanced = false;
 };

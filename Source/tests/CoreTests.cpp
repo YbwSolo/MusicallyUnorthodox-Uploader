@@ -4,6 +4,7 @@
 #include "core/Assistant.h"
 #include "core/Texts.h"
 #include "PluginProcessor.h"
+#include "ui/Theme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
 #include <cstring>
@@ -258,6 +259,76 @@ int main()
         check (! has (r, "setKey"), "ordinary words are not mistaken for a key");
     }
 
+    std::cout << "Updating from inside the plugin" << std::endl;
+    {
+        UpdateInfo info;
+        const juce::String sha = juce::String::repeatedString ("ab", 32);
+        check (Updater::parseFeed ("{\"build\":7,\"version\":\"0.1.7\",\"file\":\"MUUploader-bundles.zip\",\"sha256\":\"" + sha + "\"}", info)
+               && info.build == 7 && info.version == "0.1.7", "reads the update feed");
+        check (! Updater::parseFeed ("{\"build\":7,\"file\":\"../evil.zip\",\"sha256\":\"" + sha + "\"}", info)
+               && ! Updater::parseFeed ("{\"build\":7,\"file\":\"a.zip\",\"sha256\":\"short\"}", info)
+               && ! Updater::parseFeed ("not json", info), "refuses a feed that points somewhere odd or has no proper checksum");
+
+       #if ! JUCE_WINDOWS
+        // a pretend release on disk: new plugin bundles and a new video tool, zipped, with its feed
+        const auto feed = scratch.getChildFile ("feed"), make = scratch.getChildFile ("make");
+        const auto oldAU = scratch.getChildFile ("installed/MU Uploader.component"), oldVST = scratch.getChildFile ("installed/MU Uploader.vst3");
+        const auto toolDir = scratch.getChildFile ("installed/tool");
+        feed.createDirectory();
+        toolDir.createDirectory();
+        for (auto* kind : { "Components/MU Uploader.component", "VST3/MU Uploader.vst3" })
+        {
+            make.getChildFile (kind).getChildFile ("Contents/MacOS").createDirectory();
+            make.getChildFile (kind).getChildFile ("Contents/MacOS/MU Uploader").replaceWithText ("new plugin");
+            make.getChildFile (kind).getChildFile ("Contents/Info.plist").replaceWithText ("new info");
+        }
+        make.getChildFile ("Support").createDirectory();
+        make.getChildFile ("Support/ffmpeg").replaceWithText ("new tool");
+        oldAU.getChildFile ("Contents/MacOS").createDirectory();
+        oldAU.getChildFile ("Contents/MacOS/MU Uploader").replaceWithText ("old plugin");
+        oldAU.getChildFile ("Contents/Resources/gone.txt").create();
+        oldVST.getChildFile ("Contents/MacOS").createDirectory();
+        toolDir.getChildFile ("ffmpeg").replaceWithText ("old tool");
+
+        juce::ChildProcess zipper;
+        zipper.start (juce::StringArray { "sh", "-c", "cd '" + make.getFullPathName() + "' && zip -qry '"
+                                                        + feed.getChildFile ("MUUploader-bundles.zip").getFullPathName() + "' Components VST3 Support" });
+        zipper.waitForProcessToFinish (20000);
+        const auto zipSha = Updater::sha256Of (feed.getChildFile ("MUUploader-bundles.zip"));
+        feed.getChildFile ("latest.json").replaceWithText ("{\"build\":9,\"version\":\"0.1.9\",\"file\":\"MUUploader-bundles.zip\",\"sha256\":\"" + zipSha + "\"}");
+
+        Settings s3;
+        Updater updater (s3);
+        auto waitFor = [&] { for (int i = 0; i < 300; ++i) { pump (50); const auto p = updater.getState().phase;
+                                 if (p != UpdateState::Phase::checking && p != UpdateState::Phase::downloading && p != UpdateState::Phase::installing) break; } };
+        const auto feedUrl = "file://" + feed.getFullPathName();
+        updater.configureForTesting (feedUrl, oldAU, oldVST, toolDir, 9);
+        updater.checkNow(); waitFor();
+        check (updater.getState().phase == UpdateState::Phase::upToDate, "says it is up to date when it is");
+
+        updater.configureForTesting (feedUrl, oldAU, oldVST, toolDir, 5);
+        updater.checkNow(); waitFor();
+        check (updater.getState().phase == UpdateState::Phase::available && updater.getState().latest.version == "0.1.9", "finds a newer build");
+        updater.installNow(); waitFor();
+        check (updater.getState().phase == UpdateState::Phase::installed
+               && oldAU.getChildFile ("Contents/MacOS/MU Uploader").loadFileAsString() == "new plugin"
+               && oldVST.getChildFile ("Contents/Info.plist").loadFileAsString() == "new info"
+               && ! oldAU.getChildFile ("Contents/Resources/gone.txt").exists(), "installs it over the old plugin and clears out what the new one dropped  " + updater.getState().message);
+        check (toolDir.getChildFile ("ffmpeg").loadFileAsString() == "new tool", "the video tool is updated with it");
+
+        feed.getChildFile ("latest.json").replaceWithText ("{\"build\":10,\"version\":\"0.1.10\",\"file\":\"MUUploader-bundles.zip\",\"sha256\":\"" + sha + "\"}");
+        oldAU.getChildFile ("Contents/MacOS/MU Uploader").replaceWithText ("keep me");
+        Updater second (s3);
+        auto waitSecond = [&] { for (int i = 0; i < 300; ++i) { pump (50); const auto p = second.getState().phase;
+                                    if (p != UpdateState::Phase::checking && p != UpdateState::Phase::downloading && p != UpdateState::Phase::installing) break; } };
+        second.configureForTesting (feedUrl, oldAU, oldVST, toolDir, 5);
+        second.checkNow(); waitSecond();
+        second.installNow(); waitSecond();
+        check (second.getState().phase == UpdateState::Phase::failed && oldAU.getChildFile ("Contents/MacOS/MU Uploader").loadFileAsString() == "keep me",
+               "a download that does not match its checksum is thrown away and nothing is touched");
+       #endif
+    }
+
     std::cout << "Video, MP3 and the BeatStars pack" << std::endl;
     if (media::available())
     {
@@ -274,15 +345,32 @@ int main()
         { juce::PNGImageFormat png; auto out = coverFile.createOutputStream(); png.writeImageToStream (cover, *out); }
         beat = lib.save (beat, {}, coverFile, false);
 
-        const auto frame = media::composeFrame (cover, beat.title, "Gunna type beat   |   prod. JP");
-        const auto frameFile = scratch.getChildFile ("frame.png");
-        { juce::PNGImageFormat png; auto out = frameFile.createOutputStream(); png.writeImageToStream (frame, *out); }
-        check (frame.getWidth() == 1920 && frame.getHeight() == 1080, "frame is 1920 x 1080");
+        media::FrameText words;
+        words.title = beat.title; words.subtitle = "Gunna type beat"; words.label = "FREE FOR PROFIT"; words.credit = "prod. JP";
+        words.chips = { "161 BPM", "E MINOR" };
+        const auto frame = media::composeFrame (cover, words);
+        check (frame.image.getWidth() == 1920 && frame.image.getHeight() == 1080 && frame.bands > 0
+               && juce::Rectangle<int> (1920, 1080).contains (frame.bars), "picture is 1920 x 1080 with room for the bars");
+        check (frame.accent.getHue() < 0.14f && frame.accent.getSaturation() > 0.5f, "the accent colour is taken from the cover (" + frame.accent.toDisplayString (false) + ")");
+        check (media::accentOf (juce::Image (juce::Image::RGB, 64, 64, true)) == theme::yellow, "a colourless cover falls back to the house yellow");
 
         juce::String error;
         double last = 0;
         const auto video = scratch.getChildFile ("video.mp4");
-        const bool ok = media::renderVideo (frameFile, lib.audioOf (beat), video, beat.seconds, [&] (double f) { last = f; return true; }, error);
+        const bool ok = media::renderVideo (frame, lib.audioOf (beat), video, beat.seconds, [&] (double f) { last = f; return true; }, error);
+        check (! scratch.getChildFile ("video-bars.raw").exists() && ! scratch.getChildFile ("video-picture.png").exists(), "working files are cleaned up afterwards");
+
+        // kept for the build machine, which decodes the video and checks its colours against this picture
+        const auto keep = juce::SystemStats::getEnvironmentVariable ("MUU_KEEP", {});
+        if (keep.isNotEmpty())
+        {
+            juce::File dir (keep);
+            dir.createDirectory();
+            video.copyFileTo (dir.getChildFile ("video.mp4"));
+            juce::PNGImageFormat png;
+            dir.getChildFile ("picture.png").deleteFile();
+            if (auto out = dir.getChildFile ("picture.png").createOutputStream()) png.writeImageToStream (frame.image, *out);
+        }
         check (ok && video.getSize() > 50000, "video made (" + juce::String (video.getSize() / 1024) + " KB) " + error);
         check (last > 0.5, "progress was reported while it rendered");
 
@@ -328,17 +416,15 @@ int main()
         const double clipStart = media::bestClipStart (longAudio, 45.0);
         check (clipStart >= 18.0 && clipStart <= 25.0, "the clip is cut from the full part of the beat (starts at " + juce::String (clipStart, 0) + " s)");
 
-        const auto tall = media::composeFrame (cover, beat.title, "Gunna type beat   |   prod. JP", true);
-        const auto tallFile = scratch.getChildFile ("frame-tall.png");
-        { juce::PNGImageFormat png; auto out = tallFile.createOutputStream(); png.writeImageToStream (tall, *out); }
+        const auto tall = media::composeFrame (cover, words, true);
         const auto clip = scratch.getChildFile ("clip.mp4");
-        const bool clipOk = media::renderVideo (tallFile, longAudio, clip, 45.0, {}, error, clipStart, 1.5);
+        const bool clipOk = media::renderVideo (tall, longAudio, clip, 45.0, {}, error, clipStart, 1.5);
         juce::MemoryBlock clipBytes;
         clip.loadFileAsData (clipBytes);
         bytes = clipBytes;
         const int clipHeader = findAtom ("mvhd");
         const double clipLength = clipHeader >= 0 ? bigEndian (clipHeader + 20) / juce::jmax (1.0, bigEndian (clipHeader + 16)) : 0.0;
-        check (clipOk && tall.getWidth() == 1080 && tall.getHeight() == 1920 && std::abs (clipLength - 45.0) < 0.6,
+        check (clipOk && tall.image.getWidth() == 1080 && tall.image.getHeight() == 1920 && juce::Rectangle<int> (1080, 1700).contains (tall.bars) && std::abs (clipLength - 45.0) < 0.6,
                "vertical clip made: 1080 x 1920, " + juce::String (clipLength, 1) + " s " + error);
 
         Settings s2;

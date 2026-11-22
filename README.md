@@ -30,7 +30,8 @@ Then open your DAW, rescan plugins if it does not show up, and put **MU Uploader
 3. Pick the licence:
    - **Free for profit:** artists can release on every platform as long as they credit you and do not claim Content ID.
    - **Free:** free to record on, but they have to buy a lease to release it on streaming platforms.
-4. Press **Upload**. It makes the video, posts it, and gives you the link. Choose Schedule to have it go public later.
+4. Press **Upload**. It makes the video (your cover, the beat's name, and bars that move with the music), posts it,
+   and gives you the link. Choose Schedule to have it go public later.
    Tick **Vertical clip + Short** for a 45 second upright clip cut from the fullest part of the beat. It is posted
    as a YouTube Short, and the file is kept so you can post it to TikTok and Instagram.
 5. **Beats** keeps everything you have saved. Make catalogs and sub-categories, and drag a beat out to get its file.
@@ -43,6 +44,12 @@ Then open your DAW, rescan plugins if it does not show up, and put **MU Uploader
 BeatStars does not let apps upload beats for you. Tick **Pack for BeatStars** and the plugin puts the WAV, the MP3,
 a square cover and the details in one folder, then opens BeatStars so you can drag them in. Paste the beat's
 BeatStars link back into the Upload page and it becomes the buy link in the YouTube description.
+
+## Updates
+
+The plugin checks for a new version by itself. When there is one, Settings shows **Install the update**: press it,
+then quit and reopen your DAW. On Windows the button downloads the new installer for you to run.
+The first time, install with the file from Releases; after that it updates from inside the plugin.
 
 ## Where things are kept
 

@@ -98,25 +98,15 @@ void Publisher::run()
     juce::String problem, videoId, shortId;
     const auto dir = library.beatDir (beat.id);
     const auto audio = library.audioOf (beat);
-    auto writePng = [] (const juce::Image& image, const juce::File& file)
-    {
-        file.deleteFile();
-        juce::PNGImageFormat png;
-        if (auto stream = file.createOutputStream())
-            png.writeImageToStream (image, *stream);
-    };
-
     if (! audio.existsAsFile())
         problem = "The beat's audio file is missing.";
 
     if (problem.isEmpty() && job.youtube)
     {
-        const auto frameFile = dir.getChildFile ("frame.png");
         const auto video = dir.getChildFile ("video.mp4");
-        writePng (job.frame, frameFile);
 
         setStage ("Making the video", 0.0);
-        if (media::renderVideo (frameFile, audio, video, beat.seconds,
+        if (media::renderVideo (job.frame, audio, video, beat.seconds,
                                 [this] (double f) { fraction.store (f * 0.25); sendChangeMessage(); return ! threadShouldExit(); }, problem))
         {
             setStage ("Uploading to YouTube", 0.25);
@@ -128,14 +118,12 @@ void Publisher::run()
     if (problem.isEmpty() && job.clip && ! threadShouldExit())
     {
         // a short vertical cut of the fullest part of the beat, for Shorts, TikTok and Reels
-        const auto frameFile = dir.getChildFile ("frame-tall.png");
         const auto clip = clipFile (library, beat);
-        writePng (job.tallFrame, frameFile);
         const double length = juce::jmin (45.0, beat.seconds);
         const double start = media::bestClipStart (audio, length);
 
         setStage ("Making the vertical clip", 0.70);
-        if (media::renderVideo (frameFile, audio, clip, length,
+        if (media::renderVideo (job.tallFrame, audio, clip, length,
                                 [this] (double f) { fraction.store (0.70 + f * 0.10); sendChangeMessage(); return ! threadShouldExit(); }, problem,
                                 start, beat.seconds > length ? 1.5 : 0.0)
             && job.youtube)
