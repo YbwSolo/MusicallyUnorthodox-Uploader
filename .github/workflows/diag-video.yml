@@ -1,0 +1,52 @@
+name: Diagnose video colours (Mac)
+
+on:
+  push:
+    branches: [ diag ]
+
+jobs:
+  diag:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reuse the video tool
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-build
+          key: ffmpeg-mac-${{ hashFiles('scripts/build_ffmpeg_mac.sh') }}
+
+      - name: Build the video tool if needed
+        run: bash scripts/build_ffmpeg_mac.sh
+
+      - name: A full ffmpeg to check the result with
+        run: brew install ffmpeg >/dev/null 2>&1 || true; which ffmpeg; ffmpeg -hide_banner -version | head -1
+
+      - name: Encode each way and compare the picture with the original
+        run: |
+          set +e
+          FULL="$(which ffmpeg)"
+          OURS="$PWD/ffmpeg-build/ffmpeg"
+          mkdir work && cd work
+          "$FULL" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=1920x1080:rate=1" -frames:v 1 frame.png
+          "$FULL" -hide_banner -loglevel error -f lavfi -i "sine=frequency=220:duration=8" -ac 2 -ar 44100 -c:a pcm_s24le a.wav
+          softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1
+          run() {  # name arch args...
+            NAME="$1"; ARCH="$2"; shift 2
+            arch -"$ARCH" "$OURS" -hide_banner -y -loop 1 -framerate 2 -i frame.png -i a.wav "$@" -c:a aac -b:a 320k -ar 48000 -t 8 -shortest -movflags +faststart "$NAME.mp4" > "$NAME.log" 2>&1
+            CODE=$?
+            PSNR=$("$FULL" -hide_banner -i "$NAME.mp4" -loop 1 -i frame.png -lavfi "[0:v]scale=1920:1080,format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]psnr" -frames:v 6 -f null - 2>&1 | grep -o "average:[0-9a-z.]*" | tail -1)
+            INFO=$("$FULL" -hide_banner -i "$NAME.mp4" 2>&1 | grep "Video:" | sed 's/^ *//' | cut -c1-150)
+            echo "RESULT $NAME ($ARCH) exit=$CODE psnr=$PSNR | $INFO"
+            grep -iE "error|warn|scaler|Incompatible|not supported" "$NAME.log" | head -5 | sed 's/^/    log: /'
+          }
+          for A in arm64 x86_64; do
+            run "vt-yuv420p-$A"   $A -c:v h264_videotoolbox -allow_sw 1 -b:v 3000k -pix_fmt yuv420p -r 2
+            run "vt-nv12-$A"      $A -c:v h264_videotoolbox -allow_sw 1 -b:v 3000k -pix_fmt nv12 -r 2
+            run "vt-hw-only-$A"   $A -c:v h264_videotoolbox -b:v 3000k -pix_fmt yuv420p -r 2
+            run "vt-sw-only-$A"   $A -c:v h264_videotoolbox -require_sw 1 -b:v 3000k -pix_fmt yuv420p -r 2
+            run "vt-30fps-$A"     $A -c:v h264_videotoolbox -allow_sw 1 -b:v 4000k -pix_fmt yuv420p -r 30
+            run "mpeg4-$A"        $A -c:v mpeg4 -q:v 3 -pix_fmt yuv420p -r 2
+            run "mpeg4-30fps-$A"  $A -c:v mpeg4 -q:v 3 -pix_fmt yuv420p -r 30
+          done
+          "$OURS" -hide_banner -filters 2>/dev/null | grep -E "scale|format|afade|overlay|showwaves" | head
