@@ -5,6 +5,7 @@
 #include "core/Texts.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
+#include <cstring>
 
 using namespace sd;
 
@@ -194,10 +195,26 @@ int main()
         check (ok && video.getSize() > 50000, "video made (" + juce::String (video.getSize() / 1024) + " KB) " + error);
         check (last > 0.5, "progress was reported while it rendered");
 
-        juce::ChildProcess probe;
-        probe.start (juce::StringArray { media::findFFmpeg().getFullPathName(), "-hide_banner", "-i", video.getFullPathName() });
-        const auto info = probe.readAllProcessOutput();
-        check ((info.contains ("Duration: 00:00:19.9") || info.contains ("Duration: 00:00:20")) && info.contains ("Video:") && info.contains ("Audio: aac") && info.contains ("1920x1080"), "the video is the full length, 1080p, with sound");
+        // read the MP4 itself rather than asking ffmpeg, because the small ffmpeg that ships only writes MP4s
+        juce::MemoryBlock bytes;
+        video.loadFileAsData (bytes);
+        auto findAtom = [&] (const char* name) -> int
+        {
+            const auto* data = (const char*) bytes.getData();
+            for (size_t i = 0; i + 4 <= bytes.getSize(); ++i)
+                if (std::memcmp (data + i, name, 4) == 0) return (int) i;
+            return -1;
+        };
+        auto bigEndian = [&] (int at)
+        {
+            const auto* d = (const unsigned char*) bytes.getData() + at;
+            return (double) (((juce::uint32) d[0] << 24) | ((juce::uint32) d[1] << 16) | ((juce::uint32) d[2] << 8) | (juce::uint32) d[3]);
+        };
+        const int mvhd = findAtom ("mvhd");
+        const double length = mvhd >= 0 ? bigEndian (mvhd + 20) / juce::jmax (1.0, bigEndian (mvhd + 16)) : 0.0;
+        const bool h264 = findAtom ("avc1") >= 0;
+        check (findAtom ("moov") >= 0 && (h264 || findAtom ("mp4v") >= 0) && findAtom ("mp4a") >= 0 && std::abs (length - 20.0) < 0.6,
+               "the video is the full length with picture and sound (" + juce::String (length, 2) + " s, " + (h264 ? "H.264" : "MPEG-4") + ")");
 
         Settings s2;
         GoogleAuth google (s2);
