@@ -180,8 +180,11 @@ bool renderVideo (const juce::File& frame, const juce::File& audio, const juce::
         juce::StringArray args { "-hide_banner", "-y", "-loop", "1", "-framerate", "2", "-i", frame.getFullPathName(),
                                  "-i", audio.getFullPathName() };
         args.addArray (encoder);
-        args.addArray ({ "-pix_fmt", "yuv420p", "-r", "2", "-c:a", "aac", "-b:a", "320k", "-ar", "48000",
-                         "-shortest", "-movflags", "+faststart", outMp4.getFullPathName() });
+        args.addArray ({ "-pix_fmt", "yuv420p", "-r", "2", "-c:a", "aac", "-b:a", "320k", "-ar", "48000" });
+        // the length is given outright: some encoders hold frames back, and "stop with the audio" alone
+        // then leaves seconds of silent picture on the end
+        if (seconds > 0.0) args.addArray ({ "-t", juce::String (seconds, 3) });
+        args.addArray ({ "-shortest", "-movflags", "+faststart", outMp4.getFullPathName() });
 
         error.clear();
         if (run (args, seconds, progress, error) && outMp4.getSize() > 1024)
